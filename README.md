@@ -78,8 +78,7 @@ npm run build
 .
 |-- hyperedge-app/
 |   |-- app/          Pages, components, APIs, and market models
-|   |-- tests/        Route and quantitative tests
-|   `-- README.md     Detailed application notes
+|   `-- tests/        Route and quantitative tests
 |-- LICENSE
 `-- README.md
 ```

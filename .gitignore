@@ -1,9 +1,39 @@
-.idea/
-.vscode/
-.ipynb_checkpoints/
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Build and test output
+coverage/
+.next/
+.vinext/
+out/
+dist/
+.wrangler/
+outputs/
+work/
+.devserver/
+.vercel/
+*.tsbuildinfo
+next-env.d.ts
+
+# Environment and local runtimes
 .env*
 .venv/
 __pycache__/
+.ipynb_checkpoints/
+
+# Logs and credentials
 *.log
-*.tsbuildinfo
+*.pem
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
 Thumbs.db

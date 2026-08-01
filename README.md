@@ -50,7 +50,7 @@ Requirements:
 - npm
 
 ```powershell
-cd "C:\Users\YOUR_NAME\Desktop\HyperEdge\quant-pairs-web"
+cd "C:\Users\YOUR_NAME\Desktop\HyperEdge\hyperedge-app"
 npm install
 npm run dev
 ```
@@ -66,7 +66,7 @@ npm run dev -- --port 4322
 ## Validate
 
 ```powershell
-cd quant-pairs-web
+cd hyperedge-app
 npm run lint
 npm test
 npm run build
@@ -76,7 +76,7 @@ npm run build
 
 ```text
 .
-|-- quant-pairs-web/
+|-- hyperedge-app/
 |   |-- app/          Pages, components, APIs, and market models
 |   |-- tests/        Route and quantitative tests
 |   `-- README.md     Detailed application notes

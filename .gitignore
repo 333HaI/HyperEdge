@@ -1,0 +1,9 @@
+.idea/
+.vscode/
+.ipynb_checkpoints/
+.env*
+.venv/
+__pycache__/
+*.log
+*.tsbuildinfo
+Thumbs.db

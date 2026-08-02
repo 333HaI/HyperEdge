@@ -212,7 +212,7 @@ export default function HyperliquidRadar() {
   const [sort, setSort] = useState<SortKey>("score");
   const [watchlist, setWatchlist] = useState<string[]>([]);
   const [watchOnly, setWatchOnly] = useState(false);
-  const [refreshSeconds, setRefreshSeconds] = useState(30);
+  const [refreshSeconds, setRefreshSeconds] = useState(60);
   const [paperSize, setPaperSize] = useState(1000);
   const [paperDirection, setPaperDirection] =
     useState<TradeDirection>("LONG");
@@ -220,7 +220,10 @@ export default function HyperliquidRadar() {
   const [trackedCoins, setTrackedCoins] = useState<string[]>([]);
   const previousSignals = useRef<Record<string, HyperliquidSignal>>({});
   const alphaRequests = useRef(new Set<string>());
+  const alphaModels = useRef(new Map<string, EmpiricalAlphaModel>());
+  const watchlistRef = useRef<string[]>([]);
   const ledgerRef = useRef<HTMLElement | null>(null);
+  const selectedCoin = selected?.coin ?? null;
 
   function showQualifiedSetups() {
     setSearch("");
@@ -241,8 +244,11 @@ export default function HyperliquidRadar() {
         setWatchlist(
           JSON.parse(window.localStorage.getItem(WATCHLIST_KEY) ?? "[]"),
         );
+        const storedRefresh = Number(
+          window.localStorage.getItem(REFRESH_KEY) ?? "60",
+        );
         setRefreshSeconds(
-          Number(window.localStorage.getItem(REFRESH_KEY) ?? "30"),
+          storedRefresh === 0 ? 0 : Math.max(60, storedRefresh || 60),
         );
         const storedSize = Number(
           window.localStorage.getItem(TRADE_SIZE_KEY) ?? "1000",
@@ -270,6 +276,10 @@ export default function HyperliquidRadar() {
     return () => window.clearTimeout(timer);
   }, []);
 
+  useEffect(() => {
+    watchlistRef.current = watchlist;
+  }, [watchlist]);
+
   const fetchAlphaModels = useCallback(
     async (markets: HyperliquidMarket[]): Promise<EmpiricalAlphaModel[]> => {
       const requested = markets
@@ -279,9 +289,10 @@ export default function HyperliquidRadar() {
             !market.alpha &&
             !alphaRequests.current.has(market.coin),
         )
-        .slice(0, 8);
+        .slice(0, 1);
       if (requested.length === 0) return [];
       requested.forEach((market) => alphaRequests.current.add(market.coin));
+      setAlphaError("");
       setAlphaLoading(true);
       try {
         const response = await fetch("/api/hyperliquid/alpha", {
@@ -303,6 +314,10 @@ export default function HyperliquidRadar() {
             "error" in payload ? payload.error : "Alpha estimation failed.",
           );
         }
+        const modelError = payload.models.find(
+          (model): model is { coin: string; error: string } => !hasAlphaModel(model),
+        );
+        if (modelError) throw new Error(modelError.error);
         return payload.models.filter(hasAlphaModel);
       } finally {
         requested.forEach((market) =>
@@ -331,48 +346,10 @@ export default function HyperliquidRadar() {
         );
       }
 
-      setData(payload);
-      setSelected((current) =>
-        current
-          ? payload.rows.find((row) => row.coin === current.coin) ?? current
-          : null,
-      );
-      setLoading(false);
-
-      const priority = [...payload.rows]
-        .filter((row) => row.signal !== "AVOID")
-        .sort(
-          (left, right) =>
-            Number(right.actionable) - Number(left.actionable) ||
-            right.score - left.score ||
-            right.dayVolumeUsd - left.dayVolumeUsd ||
-            right.openInterestUsd - left.openInterestUsd,
-        );
-      const actionablePriority = priority.filter((row) => row.actionable);
-      const watchlistPriority = priority.filter(
-        (row) => !row.actionable && watchlist.includes(row.coin),
-      );
-      const candidates = [
-        ...actionablePriority,
-        ...watchlistPriority,
-        ...priority.filter(
-          (row) =>
-            !row.actionable &&
-            !watchlistPriority.some((item) => item.coin === row.coin),
-        ),
-      ].slice(0, 8);
-      let models: EmpiricalAlphaModel[] = [];
-      setAlphaError("");
-      try {
-        models = await fetchAlphaModels(candidates);
-      } catch (alphaRequestError) {
-        setAlphaError(
-          alphaRequestError instanceof Error
-            ? alphaRequestError.message
-            : "Empirical validation is temporarily unavailable.",
-        );
-      }
-      const enriched = mergeAlphaModels(payload, models);
+      const enriched = mergeAlphaModels(payload, [
+        ...alphaModels.current.values(),
+      ]);
+      const activeWatchlist = watchlistRef.current;
 
       if (
         "Notification" in window &&
@@ -382,7 +359,8 @@ export default function HyperliquidRadar() {
           (row) =>
             row.actionable &&
             previousSignals.current[row.coin] !== row.signal &&
-            (watchlist.length === 0 || watchlist.includes(row.coin)),
+            (activeWatchlist.length === 0 ||
+              activeWatchlist.includes(row.coin)),
         );
         if (Object.keys(previousSignals.current).length > 0 && fresh.length > 0) {
           new window.Notification("HyperEdge", {
@@ -390,6 +368,7 @@ export default function HyperliquidRadar() {
           });
         }
       }
+
       previousSignals.current = Object.fromEntries(
         enriched.rows.map((row) => [row.coin, row.signal]),
       );
@@ -409,7 +388,7 @@ export default function HyperliquidRadar() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [fetchAlphaModels, watchlist]);
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadMarkets(), 0);
@@ -426,14 +405,14 @@ export default function HyperliquidRadar() {
   }, [loadMarkets, refreshSeconds]);
 
   useEffect(() => {
-    if (!selected) return;
+    if (!selectedCoin) return;
     const controller = new AbortController();
     const timer = window.setTimeout(() => {
       setDetailLoading(true);
       setDetailError("");
       setDetail(null);
       fetch(
-        `/api/hyperliquid/market?coin=${encodeURIComponent(selected.coin)}`,
+        `/api/hyperliquid/market?coin=${encodeURIComponent(selectedCoin)}`,
         { signal: controller.signal, cache: "no-store" },
       )
         .then(async (response) => {
@@ -461,7 +440,7 @@ export default function HyperliquidRadar() {
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [selected]);
+  }, [selectedCoin]);
 
   useEffect(() => {
     if (!selected || selected.alpha || selected.signal === "AVOID") return;
@@ -470,6 +449,7 @@ export default function HyperliquidRadar() {
       .then((models) => {
         if (cancelled || models.length === 0) return;
         const model = models[0];
+        alphaModels.current.set(model.coin, model);
         setData((current) =>
           current ? mergeAlphaModels(current, [model]) : current,
         );
@@ -638,9 +618,9 @@ export default function HyperliquidRadar() {
               onChange={(event) => updateRefresh(Number(event.target.value))}
             >
               <option value={0}>Off</option>
-              <option value={15}>15 sec</option>
-              <option value={30}>30 sec</option>
               <option value={60}>60 sec</option>
+              <option value={120}>2 min</option>
+              <option value={300}>5 min</option>
             </select>
           </label>
           <button
@@ -672,10 +652,20 @@ export default function HyperliquidRadar() {
             <h1>Hybrid Edge Radar</h1>
           </div>
           <div className="hl-source">
-            <span className="live-dot" />
-            <strong>Hyperliquid mainnet</strong>
+            <span
+              className={
+                data?.source.status === "STALE" ? "live-dot is-stale" : "live-dot"
+              }
+            />
+            <strong>
+              {data?.source.status === "STALE"
+                ? "Cached Hyperliquid snapshot"
+                : "Hyperliquid mainnet"}
+            </strong>
             <span>
-              {data ? `Updated ${timeLabel(data.source.fetchedAt)}` : "Connecting"}
+              {data
+                ? `${data.source.status === "STALE" ? "Cached" : "Updated"} ${timeLabel(data.source.fetchedAt)}`
+                : "Connecting"}
             </span>
           </div>
         </section>
@@ -749,10 +739,10 @@ export default function HyperliquidRadar() {
             </div>
             <span className="method-tag">
               {alphaLoading
-                ? "Updating validation overlay"
+                ? "Calculating selected market"
                 : alphaError
                   ? "Overlay unavailable"
-                  : `${data?.rows.filter((row) => row.alpha).length ?? 0} empirical overlays`}
+                  : `${data?.rows.filter((row) => row.alpha).length ?? 0} on-demand overlays`}
             </span>
           </div>
           <div className="hl-queue-grid">
@@ -1382,26 +1372,6 @@ export default function HyperliquidRadar() {
                   <div className="hl-chart">
                     <ResponsiveContainer width="100%" height="100%">
                       <AreaChart data={detail.candles}>
-                        <defs>
-                          <linearGradient
-                            id="hl-price-fill"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="0%"
-                              stopColor="var(--green)"
-                              stopOpacity={0.24}
-                            />
-                            <stop
-                              offset="100%"
-                              stopColor="var(--green)"
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
                         <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
                         <XAxis
                           dataKey="time"
@@ -1426,12 +1396,12 @@ export default function HyperliquidRadar() {
                           contentStyle={{
                             backgroundColor: "var(--tooltip-bg)",
                             border: "1px solid var(--line-strong)",
-                            borderRadius: 6,
+                            borderRadius: 0,
                             color: "var(--ink)",
-                            boxShadow: "var(--shadow)",
+                            boxShadow: "none",
                           }}
                           labelStyle={{ color: "var(--muted)" }}
-                          itemStyle={{ color: "var(--green)" }}
+                          itemStyle={{ color: "var(--accent)" }}
                           labelFormatter={(value) =>
                             new Date(value).toLocaleString()
                           }
@@ -1440,9 +1410,9 @@ export default function HyperliquidRadar() {
                         <Area
                           dataKey="close"
                           type="monotone"
-                          stroke="var(--green)"
+                          stroke="var(--accent)"
                           strokeWidth={2}
-                          fill="url(#hl-price-fill)"
+                          fill="transparent"
                           isAnimationActive={false}
                         />
                       </AreaChart>

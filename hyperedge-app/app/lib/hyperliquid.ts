@@ -5,6 +5,39 @@ import {
 
 const INFO_URL = "https://api.hyperliquid.xyz/info";
 const HOUR_MS = 60 * 60 * 1000;
+const RATE_LIMIT_BASE_MS = 30_000;
+const RATE_LIMIT_MAX_MS = 5 * 60_000;
+
+interface InfoRateLimitState {
+  cooldownUntil: number;
+  strikes: number;
+}
+
+const runtime = globalThis as typeof globalThis & {
+  __hyperedgeInfoRateLimit?: InfoRateLimitState;
+};
+const infoRateLimit = (runtime.__hyperedgeInfoRateLimit ??= {
+  cooldownUntil: 0,
+  strikes: 0,
+});
+
+export class HyperliquidRateLimitError extends Error {
+  readonly retryAt: number;
+
+  constructor(retryAt: number) {
+    super(
+      `Hyperliquid rate limit reached. Retry after ${new Date(retryAt).toISOString()}.`,
+    );
+    this.name = "HyperliquidRateLimitError";
+    this.retryAt = retryAt;
+  }
+}
+
+export function isHyperliquidRateLimitError(
+  error: unknown,
+): error is HyperliquidRateLimitError {
+  return error instanceof HyperliquidRateLimitError;
+}
 
 export type HyperliquidCategory =
   | "Crypto"
@@ -97,6 +130,9 @@ export interface HyperliquidMarketsResponse {
     provider: "Hyperliquid";
     endpoint: string;
     fetchedAt: string;
+    status?: "LIVE" | "STALE";
+    notice?: string | null;
+    nextRetryAt?: string | null;
   };
   summary: {
     markets: number;
@@ -220,7 +256,19 @@ function displaySymbol(coin: string): string {
   return separator >= 0 ? coin.slice(separator + 1) : coin;
 }
 
+function retryAfterDelay(value: string | null): number {
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
+
 async function infoRequest<T>(body: Record<string, unknown>): Promise<T> {
+  if (Date.now() < infoRateLimit.cooldownUntil) {
+    throw new HyperliquidRateLimitError(infoRateLimit.cooldownUntil);
+  }
+
   const response = await fetch(INFO_URL, {
     method: "POST",
     headers: {
@@ -231,10 +279,55 @@ async function infoRequest<T>(body: Record<string, unknown>): Promise<T> {
     signal: AbortSignal.timeout(20_000),
     cache: "no-store",
   });
+
+  if (response.status === 429) {
+    infoRateLimit.strikes += 1;
+    const exponentialDelay = Math.min(
+      RATE_LIMIT_MAX_MS,
+      RATE_LIMIT_BASE_MS * 2 ** Math.max(0, infoRateLimit.strikes - 1),
+    );
+    const delay = Math.max(
+      exponentialDelay,
+      retryAfterDelay(response.headers.get("Retry-After")),
+    );
+    infoRateLimit.cooldownUntil = Date.now() + delay;
+    throw new HyperliquidRateLimitError(infoRateLimit.cooldownUntil);
+  }
+
   if (!response.ok) {
     throw new Error(`Hyperliquid info request failed (${response.status}).`);
   }
+
+  if (Date.now() >= infoRateLimit.cooldownUntil) {
+    infoRateLimit.cooldownUntil = 0;
+    infoRateLimit.strikes = 0;
+  }
   return (await response.json()) as T;
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  worker: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let cursor = 0;
+
+  async function runWorker() {
+    while (cursor < values.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await worker(values[index]);
+    }
+  }
+
+  await Promise.all(
+    Array.from(
+      { length: Math.min(concurrency, values.length) },
+      () => runWorker(),
+    ),
+  );
+  return results;
 }
 
 export async function fetchHyperliquidFundingHistory(
@@ -563,13 +656,14 @@ export async function fetchHyperliquidMarkets(): Promise<HyperliquidMarketsRespo
       fullName: index === 0 ? "Hyperliquid" : `Perp DEX ${index + 1}`,
     },
   );
-  const marketsByDex = await Promise.all(
-    dexDefinitions.map((dex) =>
+  const marketsByDex = await mapWithConcurrency(
+    dexDefinitions,
+    2,
+    (dex) =>
       infoRequest<[PerpMeta, PerpAssetContext[]]>({
         type: "metaAndAssetCtxs",
         ...(dex.name ? { dex: dex.name } : {}),
       }),
-    ),
   );
   const rows: HyperliquidMarket[] = [];
 

@@ -268,10 +268,17 @@ export default function VenueLens() {
 
         <section className="venue-source-strip" aria-label="Data source status">
           {(data?.sources ?? []).map((source) => (
-            <div className={source.ok ? "is-live" : "is-error"} key={source.venue}>
+            <div
+              className={source.stale ? "is-stale" : source.ok ? "is-live" : "is-error"}
+              key={source.venue}
+            >
               <span className="live-dot" />
               <strong>{source.venue}</strong>
-              <small>{source.ok ? `${source.markets} markets` : source.message}</small>
+              <small>
+                {source.ok
+                  ? `${source.markets} markets${source.stale ? ` / ${source.message}` : ""}`
+                  : source.message}
+              </small>
             </div>
           ))}
         </section>

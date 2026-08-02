@@ -1,8 +1,8 @@
 import {
-  fetchHyperliquidMarkets,
   type HyperliquidCategory,
   type HyperliquidMarketsResponse,
 } from "./hyperliquid.ts";
+import { getHyperliquidMarketsSnapshot } from "./hyperliquidCache.ts";
 
 const LIGHTER_BASE_URL = "https://mainnet.zklighter.elliot.ai";
 const VARIATIONAL_BASE_URL =
@@ -57,6 +57,7 @@ export interface VenueComparison {
 export interface VenueSourceStatus {
   venue: VenueFamily;
   ok: boolean;
+  stale: boolean;
   markets: number;
   message: string;
 }
@@ -528,26 +529,48 @@ async function fetchVariationalMarkets(): Promise<VenueMarketSnapshot[]> {
   return normalizeVariationalMarkets(payload);
 }
 
+interface VenueFetchResult {
+  markets: VenueMarketSnapshot[];
+  stale: boolean;
+  message: string;
+}
+
 export async function fetchVenueIntelligence(): Promise<VenueIntelligenceResponse> {
-  const results = await Promise.allSettled([
-    fetchHyperliquidMarkets().then(normalizeHyperliquidMarkets),
-    fetchLighterMarkets(),
-    fetchVariationalMarkets(),
+  const results = await Promise.allSettled<VenueFetchResult>([
+    getHyperliquidMarketsSnapshot().then((payload) => ({
+      markets: normalizeHyperliquidMarkets(payload),
+      stale: payload.source.status === "STALE",
+      message:
+        payload.source.status === "STALE"
+          ? `Cached from ${payload.source.fetchedAt}`
+          : "Live",
+    })),
+    fetchLighterMarkets().then((markets) => ({
+      markets,
+      stale: false,
+      message: "Live",
+    })),
+    fetchVariationalMarkets().then((markets) => ({
+      markets,
+      stale: false,
+      message: "Live",
+    })),
   ]);
   const families: VenueFamily[] = ["Hyperliquid", "Lighter", "Variational"];
   const sources = results.map((result, index) => ({
     venue: families[index],
     ok: result.status === "fulfilled",
-    markets: result.status === "fulfilled" ? result.value.length : 0,
+    stale: result.status === "fulfilled" && result.value.stale,
+    markets: result.status === "fulfilled" ? result.value.markets.length : 0,
     message:
       result.status === "fulfilled"
-        ? "Live"
+        ? result.value.message
         : result.reason instanceof Error
           ? result.reason.message
           : "Unavailable",
   }));
   const markets = results.flatMap((result) =>
-    result.status === "fulfilled" ? result.value : [],
+    result.status === "fulfilled" ? result.value.markets : [],
   );
   if (markets.length === 0) {
     throw new Error("Every venue data source is currently unavailable.");

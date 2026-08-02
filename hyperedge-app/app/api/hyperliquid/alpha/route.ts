@@ -4,9 +4,9 @@ import type { EmpiricalAlphaModel } from "../../../lib/alphaModel";
 
 export const dynamic = "force-dynamic";
 
-const MAX_BATCH = 8;
-const CONCURRENCY = 3;
-const CACHE_MS = 10 * 60 * 1000;
+const MAX_BATCH = 1;
+const CONCURRENCY = 1;
+const CACHE_MS = 30 * 60 * 1000;
 
 interface AlphaRequest {
   coin: string;
@@ -24,6 +24,7 @@ interface CacheEntry {
 }
 
 const modelCache = new Map<string, CacheEntry>();
+const pendingModels = new Map<string, Promise<EmpiricalAlphaModel>>();
 
 function isAlphaRequest(value: unknown): value is AlphaRequest {
   if (!value || typeof value !== "object") return false;
@@ -71,13 +72,22 @@ async function modelFor(request: AlphaRequest): Promise<EmpiricalAlphaModel> {
   const key = `${request.coin}:${impactBucket}`;
   const cached = modelCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.model;
+  const pending = pendingModels.get(key);
+  if (pending) return pending;
 
-  const model = await fetchHyperliquidAlphaModel(
+  const task = fetchHyperliquidAlphaModel(
     request.coin,
     request.impactSpreadBps,
-  );
-  modelCache.set(key, { model, expiresAt: Date.now() + CACHE_MS });
-  return model;
+  )
+    .then((model) => {
+      modelCache.set(key, { model, expiresAt: Date.now() + CACHE_MS });
+      return model;
+    })
+    .finally(() => {
+      pendingModels.delete(key);
+    });
+  pendingModels.set(key, task);
+  return task;
 }
 
 export async function POST(request: Request) {

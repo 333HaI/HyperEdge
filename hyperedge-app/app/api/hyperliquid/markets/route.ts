@@ -1,51 +1,14 @@
 import { NextResponse } from "next/server";
-import {
-  fetchHyperliquidMarkets,
-  type HyperliquidMarketsResponse,
-} from "../../../lib/hyperliquid";
+import { getHyperliquidMarketsSnapshot } from "../../../lib/hyperliquidCache";
 
 export const dynamic = "force-dynamic";
 
-const CACHE_MS = 15_000;
-
-interface MarketsCache {
-  value: HyperliquidMarketsResponse | null;
-  expiresAt: number;
-  pending: Promise<HyperliquidMarketsResponse> | null;
-}
-
-const runtime = globalThis as typeof globalThis & {
-  __hyperedgeMarketsCache?: MarketsCache;
-};
-const cache = (runtime.__hyperedgeMarketsCache ??= {
-  value: null,
-  expiresAt: 0,
-  pending: null,
-});
-
-async function marketsSnapshot(): Promise<HyperliquidMarketsResponse> {
-  if (cache.value && Date.now() < cache.expiresAt) return cache.value;
-  if (cache.pending) return cache.pending;
-
-  cache.pending = fetchHyperliquidMarkets()
-    .then((value) => {
-      cache.value = value;
-      cache.expiresAt = Date.now() + CACHE_MS;
-      return value;
-    })
-    .finally(() => {
-      cache.pending = null;
-    });
-
-  return cache.pending;
-}
-
 export async function GET() {
   try {
-    const result = await marketsSnapshot();
+    const result = await getHyperliquidMarketsSnapshot();
     return NextResponse.json(result, {
       headers: {
-        "Cache-Control": "public, max-age=0, s-maxage=15",
+        "Cache-Control": "public, max-age=0, s-maxage=60, stale-while-revalidate=300",
       },
     });
   } catch (error) {

@@ -147,7 +147,7 @@ export default function TradeJournal() {
   }, [loadMarkets]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => void loadMarkets(true), 30_000);
+    const timer = window.setInterval(() => void loadMarkets(true), 60_000);
     return () => window.clearInterval(timer);
   }, [loadMarkets]);
 
@@ -246,7 +246,7 @@ export default function TradeJournal() {
           >
             <Layers3 size={17} />
           </Link>
-          <span className="hl-auto-mark">Live marks every 30 sec</span>
+          <span className="hl-auto-mark">Live marks every 60 sec</span>
           <Link
             className="icon-button hl-mobile-nav-link"
             href="/"
@@ -275,10 +275,20 @@ export default function TradeJournal() {
             <h1>Trade Journal</h1>
           </div>
           <div className="hl-source">
-            <span className="live-dot" />
-            <strong>Hyperliquid mainnet</strong>
+            <span
+              className={
+                data?.source.status === "STALE" ? "live-dot is-stale" : "live-dot"
+              }
+            />
+            <strong>
+              {data?.source.status === "STALE"
+                ? "Cached Hyperliquid snapshot"
+                : "Hyperliquid mainnet"}
+            </strong>
             <span>
-              {data ? `Updated ${timeLabel(data.source.fetchedAt)}` : "Connecting"}
+              {data
+                ? `${data.source.status === "STALE" ? "Cached" : "Updated"} ${timeLabel(data.source.fetchedAt)}`
+                : "Connecting"}
             </span>
           </div>
         </section>

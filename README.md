@@ -50,7 +50,7 @@ Requirements:
 - npm
 
 ```powershell
-cd "C:\Users\YOUR_NAME\Desktop\HyperEdge\hyperedge-app"
+cd folder
 npm install
 npm run dev
 ```
